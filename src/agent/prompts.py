@@ -24,11 +24,12 @@ SYSTEM_PROMPT = """你是一位资深的大模型应用开发技术面试官，�
 
 ROUND_START_PROMPT = """
 【当前面试信息】
+- 候选人类型：{difficulty}
+- 难度侧重说明：{difficulty_focus}
 - 公司级别：{company_level}
 - 当前轮次：第 {current_round}/{total_rounds} 轮
 - 本轮主题：{round_name}
 - 考察重点：{round_focus}
-- 难度：{difficulty}
 - 本轮到目前为止已问 {current_question} 题，本轮共 {questions_per_round} 题
 
 【简历信息】
@@ -38,7 +39,7 @@ ROUND_START_PROMPT = """
 请根据以上信息，提出本轮的第 {next_question_num} 个面试问题。
 
 要求：
-1. 问题要紧扣当前轮次的考察重点
+1. 问题要紧扣当前轮次的考察重点，且符合上述候选人类型的考察侧重
 2. 难度要符合当前设定
 3. 如果有简历信息，尽量结合简历中的项目和技能来提问
 4. 每次只问一个问题，不要追问，不要点评，直接提问
@@ -56,6 +57,8 @@ ROUND_START_PROMPT = """
 
 FOLLOWUP_PROMPT = """
 【当前面试信息】
+- 候选人类型：{difficulty}
+- 难度侧重说明：{difficulty_focus}
 - 公司级别：{company_level}
 - 当前轮次：第 {current_round}/{total_rounds} 轮
 - 本轮主题：{round_name}
@@ -75,7 +78,7 @@ FOLLOWUP_PROMPT = """
 请对候选人的回答进行简短点评（1-2句话），然后提出下一个问题。
 
 注意：
-1. 点评要客观，指出回答中的亮点和不足
+1. 点评要客观，指出回答中的亮点和不足，并结合候选人类型的考察侧重
 2. 下一个问题要紧扣当前轮次的考察重点
 3. 下一个问题不要和之前的问题重复
 4. 如果候选人回答得很好，下一题可以增加难度；如果不好，可以降低难度
@@ -92,6 +95,9 @@ ROUND_END_PROMPT = """
 【当前轮次已完成】
 第 {current_round}/{total_rounds} 轮面试已完成，本轮共问了 {questions_per_round} 个问题。
 
+【候选人类型与难度侧重】
+{difficulty_focus}
+
 【下一轮信息】
 {next_round_info}
 
@@ -103,7 +109,7 @@ ROUND_END_PROMPT = """
 
 注意：
 - 语气自然，不要太生硬
-- 下一轮的第一个问题要紧扣下一轮的考察重点
+- 下一轮的第一个问题要紧扣下一轮的考察重点，符合候选人类型
 - 只提一个问题
 
 【知识库参考资料】
@@ -141,6 +147,7 @@ REPORT_PROMPT = """你是一位专业的技术面试官，需要基于完整的�
 
 ## 基本信息
 - 面试岗位：大模型应用开发工程师
+- 候选人类型：{difficulty}
 - 公司级别：{company_level}
 - 面试轮次：{total_rounds} 轮
 - 总题数：{total_questions} 题
@@ -149,6 +156,9 @@ REPORT_PROMPT = """你是一位专业的技术面试官，需要基于完整的�
 **最终结论：录用 / 待定 / 不录用**
 
 简要说明理由（2-3句话）。
+
+【评估时参考候选人类型侧重】
+{difficulty_focus}
 
 ## 各轮次表现
 
@@ -206,12 +216,15 @@ RESUME_CONTEXT_PROMPT = """
 
 OPENING_PROMPT = """请用面试官的口吻做一个简短的面试开场，然后提出第一个问题。
 
+【候选人类型】{difficulty}
+【本次考察侧重】{difficulty_focus}
+
 开场要包含：
 1. 简短的自我介绍（你是资深大模型应用开发面试官）
 2. 说明面试形式：{company_level}级别，{total_rounds}轮技术面试，每轮{questions_per_round}题
 3. 说明第一轮的考察重点：{round_name}
 
-然后直接提出第一个问题。
+然后直接提出第一个问题（问题要符合上述候选人类型和考察侧重）。
 
 注意：
 - 如果有简历信息，第一个问题可以结合简历中的项目来问

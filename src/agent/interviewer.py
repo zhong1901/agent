@@ -39,13 +39,14 @@ class InterviewerAgent:
     def start_interview(
         self,
         company_level: str = "中厂",
-        difficulty: str = "中级",
+        difficulty: str = "社招",
         focus_category: Optional[str] = None,
         resume_info: Optional[Dict] = None,
     ) -> str:
         """
         开始一场新的面试
         company_level: 大厂 / 中厂 / 小厂
+        difficulty: 校招 / 社招 / 两者兼顾
         返回面试官开场白 + 第一个问题
         """
         # 初始化状态
@@ -78,6 +79,8 @@ class InterviewerAgent:
             total_rounds=config["total_rounds"],
             questions_per_round=config["questions_per_round"],
             round_name=round_config.get("round_name", ""),
+            difficulty=difficulty,
+            difficulty_focus=self._get_difficulty_focus(),
             resume_context=resume_context,
             context=context_str,
         )
@@ -142,6 +145,8 @@ class InterviewerAgent:
         asked_questions = self._get_asked_questions_str()
 
         user_msg = FOLLOWUP_PROMPT.format(
+            difficulty=self.state.difficulty,
+            difficulty_focus=self._get_difficulty_focus(),
             company_level=self.state.company_level.value,
             current_round=self.state.current_round,
             total_rounds=self.state.total_rounds,
@@ -181,6 +186,7 @@ class InterviewerAgent:
             current_round=self.state.current_round,
             total_rounds=self.state.total_rounds,
             questions_per_round=self.state.questions_per_round,
+            difficulty_focus=self._get_difficulty_focus(),
             next_round_info=f"第{next_round_num}轮：{next_config.get('round_name', '')}，考察重点：{next_config.get('focus', '')}",
             context=next_context_str,
             asked_questions=asked_questions,
@@ -234,6 +240,8 @@ class InterviewerAgent:
         round_names = {f"round{i+1}_name": r.get("round_name", f"第{i+1}轮") for i, r in enumerate(rounds_config)}
 
         report_prompt = REPORT_PROMPT.format(
+            difficulty=self.state.difficulty,
+            difficulty_focus=self._get_difficulty_focus(),
             company_level=self.state.company_level.value,
             qa_records=qa_records,
             total_rounds=self.state.total_rounds,
@@ -279,13 +287,28 @@ class InterviewerAgent:
             education=self.state.resume_info.get("education", "未明确"),
         )
 
+    def _get_difficulty_focus(self) -> str:
+        """获取难度档位对应的考察侧重说明"""
+        cfg = self.state.get_difficulty_config()
+        focus = cfg.get("focus_emphasis", "")
+        style = cfg.get("question_style", "")
+        hint = cfg.get("evaluation_hint", "")
+        return f"考察侧重：{focus}\n出题风格：{style}\n评价侧重：{hint}"
+
     def _retrieve_for_round(self, round_config: Dict):
         """根据轮次配置检索相关知识库"""
         categories = round_config.get("categories", [])
         depth = round_config.get("depth", "")
 
+        # 难度档对应的检索关键词（校招偏基础，社招偏进阶/工程）
+        difficulty_kw = {
+            "校招": "基础 原理 理解",
+            "社招": "实战 优化 落地 经验",
+            "两者兼顾": "综合 进阶 深度",
+        }.get(self.state.difficulty, "")
+
         # 用轮次主题作为查询词
-        query = f"{round_config.get('focus', '')} {depth} 面试题"
+        query = f"{round_config.get('focus', '')} {depth} {difficulty_kw} 面试题"
 
         # 如果有分类，优先按分类检索
         if categories:

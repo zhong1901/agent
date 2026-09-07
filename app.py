@@ -67,7 +67,13 @@ def remove_agent(session_id: str):
 
 # 面试方向选项
 CATEGORY_OPTIONS = ["全部", "RAG", "微调", "分布式训练", "基础理论", "推理优化", "工程实践", "预训练", "评测"]
-DIFFICULTY_OPTIONS = ["初级", "中级", "高级"]
+# 候选人类型（校招/社招），难度从低到高
+DIFFICULTY_OPTIONS = ["校招", "社招", "两者兼顾"]
+DIFFICULTY_INFO = {
+    "校招": "偏基础知识理解与校园项目经历",
+    "社招": "偏真实项目处理与工作经验",
+    "两者兼顾": "综合考察基础深度与工程能力（最难）",
+}
 COMPANY_LEVEL_OPTIONS = ["大厂", "中厂", "小厂"]
 
 
@@ -271,7 +277,7 @@ with gr.Blocks(title="AI大模型面试模拟") as demo:
 
     **使用说明**:
     1. （首次使用）先点击"构建知识库"，将PDF面试题导入向量库
-    2. 选择公司级别（大厂/中厂/小厂）和难度
+    2. 选择公司级别（大厂/中厂/小厂）和候选人类型（校招/社招/两者兼顾）
     3. 上传你的简历（可选，面试官会针对性提问）
     4. 点击"开始面试"
     5. 面试结束后自动生成评估报告（含Word版下载）
@@ -302,8 +308,9 @@ with gr.Blocks(title="AI大模型面试模拟") as demo:
             )
             difficulty = gr.Dropdown(
                 choices=DIFFICULTY_OPTIONS,
-                value="中级",
-                label="面试难度",
+                value="社招",
+                label="候选人类型",
+                info="校招=基础+校园项目 / 社招=真实项目+经验 / 两者兼顾=综合最难",
             )
             focus_category = gr.Dropdown(
                 choices=CATEGORY_OPTIONS,
@@ -400,22 +407,15 @@ if __name__ == "__main__":
     print("  AI大模型面试模拟Agent 启动中...")
     print("=" * 60)
 
-    # 排队机制：限制并发，避免免费版 CPU 内存溢出
+    # 排队机制：限制并发，避免内存溢出
     demo.queue(
         default_concurrency_limit=int(os.getenv("GRADIO_CONCURRENCY", "10")),
         max_size=int(os.getenv("GRADIO_QUEUE_SIZE", "100")),
     )
 
-    # HuggingFace Spaces 会自动注入 GRADIO_SERVER_NAME / GRADIO_SERVER_PORT
-    server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
-    server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
-    # 本地运行自动开浏览器，HF Spaces 上不开
-    inbrowser = os.getenv("GRADIO_IN_BROWSER", "0") == "1"
-
+    # share=True 生成公网链接，直接发给别人就能用（72小时有效，需保持电脑开机联网）
     demo.launch(
-        server_name=server_name,
-        server_port=server_port,
-        share=False,
-        inbrowser=inbrowser,
+        share=True,
+        inbrowser=False,
         theme=gr.themes.Soft(),
     )
