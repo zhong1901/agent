@@ -16,46 +16,62 @@ from src.agent.evaluator import save_interview_record, save_report_markdown, sav
 from src.rag.ingest import ingest_pdfs
 from src.rag.retriever import get_retriever
 
-# ===== 启动时初始化知识库 =====
-def _init_knowledge_base():
-    """启动时检查并构建知识库（HuggingFace Spaces 冷启动用）"""
+# ===== 启动时预加载知识库 & Embedding 模型 =====
+def _preload():
+    """应用启动时预加载（构建知识库 + 初始化Retriever + 加载embedding模型）
+    这样用户点击开始面试时就不会卡顿了。
+    """
     import os
     from config import CHROMA_PERSIST_DIR, PDF_DIR
 
-    # 检查是否已有知识库
+    print("[Preload] 正在预加载知识库...")
+
+    # 1. 检查/构建向量库
     db_file = os.path.join(CHROMA_PERSIST_DIR, "chroma.sqlite3")
-    if os.path.exists(db_file) and os.path.getsize(db_file) > 1000:
-        print(f"[Init] 知识库已存在，跳过构建")
-        return
+    if not (os.path.exists(db_file) and os.path.getsize(db_file) > 1000):
+        print(f"[Preload] 知识库不存在，开始构建（PDF目录: {PDF_DIR}）")
+        try:
+            stats = ingest_pdfs(force_rebuild=False)
+            print(f"[Preload] 知识库构建完成: {stats['total_chunks']} 个文本块")
+        except Exception as e:
+            print(f"[Preload] 知识库构建失败: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("[Preload] 知识库已存在")
 
-    print("[Init] 检测到知识库不存在，开始构建...")
-    print(f"[Init] PDF 目录: {PDF_DIR}")
-
+    # 2. 预加载 embedding 模型和 retriever（首次调用时加载，这里主动触发）
+    print("[Preload] 正在加载 embedding 模型...")
     try:
-        stats = ingest_pdfs(force_rebuild=False)
-        print(f"[Init] 知识库构建完成: {stats['total_chunks']} 个文本块")
+        _ = get_retriever()
+        print("[Preload] embedding 模型加载完成")
     except Exception as e:
-        print(f"[Init] 知识库构建失败: {e}")
+        print(f"[Preload] embedding 模型加载失败: {e}")
         import traceback
         traceback.print_exc()
+
+    set_app_ready(True)
+    print("[Preload] 预加载完成，应用就绪")
 
 
 # 会话管理：按 session_id 保存各自的 Agent 实例
 _agents: dict = {}
-_kb_initialized = False
+_app_ready = False  # 全局就绪标志
 
 
-def _ensure_kb():
-    """确保知识库已初始化（延迟初始化，首次访问时构建）"""
-    global _kb_initialized
-    if not _kb_initialized:
-        _init_knowledge_base()
-        _kb_initialized = True
+def set_app_ready(val: bool = True):
+    """标记应用是否就绪（预加载完成后置为True）"""
+    global _app_ready
+    _app_ready = val
+
+
+def is_app_ready() -> bool:
+    """应用是否就绪（知识库 + embedding 模型都加载完成）"""
+    return _app_ready
 
 
 def get_agent(session_id: str) -> InterviewerAgent:
     """根据 session_id 获取或创建 Agent 实例（会话隔离）"""
-    _ensure_kb()  # 首次访问时初始化知识库
     if session_id not in _agents:
         _agents[session_id] = InterviewerAgent()
     return _agents[session_id]
@@ -78,17 +94,22 @@ COMPANY_LEVEL_OPTIONS = ["大厂", "中厂", "小厂"]
 
 
 def check_kb_status():
-    """检查知识库状态（不加载模型，仅检查文件）"""
+    """检查系统就绪状态"""
     import os
     from config import CHROMA_PERSIST_DIR
+
+    if not is_app_ready():
+        return "⏳ 系统初始化中（加载模型），请稍等..."
 
     db_file = os.path.join(CHROMA_PERSIST_DIR, "chroma.sqlite3")
     if os.path.exists(db_file):
         size_kb = os.path.getsize(db_file) / 1024
         if size_kb > 100:
-            return f"知识库已就绪（{size_kb:.0f} KB），点击开始面试后加载模型"
+            retriever = get_retriever()
+            stats = retriever.get_collection_stats()
+            return f"✅ 系统就绪，知识库共 {stats['total_chunks']} 个文本块"
         return f"知识库文件已存在（{size_kb:.0f} KB）"
-    return "知识库未构建，首次开始面试时自动构建（约2-5分钟）"
+    return "知识库未构建"
 
 
 def build_kb(progress=gr.Progress()):
@@ -155,6 +176,14 @@ def _extract_file_bytes(file_input):
 
 def start_interview(company_level, difficulty, focus_category, resume_file, request: gr.Request):
     """开始面试（会话隔离）"""
+    # 未就绪时返回友好提示
+    if not is_app_ready():
+        return (
+            [{"role": "assistant", "content": "⏳ 系统正在初始化中（加载模型和知识库），请稍等10-20秒后再试..."}],
+            "初始化中",
+            gr.update(value=None, interactive=False),
+        )
+
     session_id = request.session_hash
     agent = get_agent(session_id)
 
@@ -184,7 +213,7 @@ def start_interview(company_level, difficulty, focus_category, resume_file, requ
         return (
             [{"role": "assistant", "content": greeting}],
             progress,
-            gr.DownloadButton(interactive=False),
+            gr.update(value=None, interactive=False),
         )
     except Exception as e:
         import traceback
@@ -192,7 +221,7 @@ def start_interview(company_level, difficulty, focus_category, resume_file, requ
         return (
             [{"role": "assistant", "content": f"启动面试失败: {e}"}],
             "启动失败",
-            gr.DownloadButton(interactive=False),
+            gr.update(value=None, interactive=False),
         )
 
 
@@ -224,6 +253,10 @@ def end_interview(chat_history, request: gr.Request):
     session_id = request.session_hash
     agent = get_agent(session_id)
 
+    # 先给用户一个正在生成的提示
+    chat_history.append({"role": "assistant", "content": "📝 正在生成面试评估报告，请稍候..."})
+    yield chat_history, "生成报告中...", "正在生成评估报告", gr.update(value=None, interactive=False)
+
     docx_path = None
     try:
         closing, report = agent.end_interview()
@@ -247,16 +280,16 @@ def end_interview(chat_history, request: gr.Request):
             traceback.print_exc()
             save_msg = f"\n\n> (报告保存失败: {e})"
 
-        return (
+        yield (
             chat_history,
             report + save_msg,
             "面试已结束",
-            gr.DownloadButton(value=docx_path, interactive=True),
+            gr.update(value=docx_path, interactive=True),
         )
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return chat_history, f"生成报告失败: {e}", "错误", gr.DownloadButton(interactive=False)
+        yield chat_history, f"生成报告失败: {e}", "错误", gr.update(value=None, interactive=False)
 
 
 def reset_interview(request: gr.Request):
@@ -264,7 +297,7 @@ def reset_interview(request: gr.Request):
     session_id = request.session_hash
     agent = get_agent(session_id)
     agent.state.reset()
-    return [], "面试结束后会在这里显示评估报告", "面试未开始", gr.DownloadButton(interactive=False)
+    return [], "面试结束后会在这里显示评估报告", "面试未开始", gr.update(value=None, interactive=False)
 
 
 # ============== Gradio界面 ==============
@@ -406,6 +439,9 @@ if __name__ == "__main__":
     print("=" * 60)
     print("  AI大模型面试模拟Agent 启动中...")
     print("=" * 60)
+
+    # 预加载知识库和模型（启动时一次性加载，用户点击就不会卡）
+    _preload()
 
     # 排队机制：限制并发，避免内存溢出
     demo.queue(

@@ -92,6 +92,10 @@ class InterviewerAgent:
 
         response = self._call_llm(messages)
 
+        # 若返回无效，给一个兜底问题
+        if not self._is_valid_response(response):
+            response = "你好，欢迎参加本次面试。我们先从基础开始：请你简单介绍一下大语言模型（LLM）的基本工作原理，以及你对此的理解。"
+
         # 记录第一个问题
         self.state.start_new_question(response)
         self.state.add_message("assistant", response)
@@ -167,6 +171,10 @@ class InterviewerAgent:
 
         response = self._call_llm(messages)
 
+        # 若返回无效（空/错误），给一个兜底问题，避免出现空题目卡住流程
+        if not self._is_valid_response(response):
+            response = "抱歉，网络似乎有点波动。我们继续：请你结合自己的项目经历，谈谈在实际开发中遇到过的最有挑战性的技术问题，以及你是怎么解决的。"
+
         # 记录新问题
         self.state.start_new_question(response)
 
@@ -198,6 +206,10 @@ class InterviewerAgent:
         ]
 
         response = self._call_llm(messages)
+
+        # 若返回无效，给一个兜底问题
+        if not self._is_valid_response(response):
+            response = "我们进入下一轮。请你谈谈在项目中使用过哪些技术栈，以及为什么选择它们。"
 
         # 进入下一轮
         self.state.next_round()
@@ -235,18 +247,25 @@ class InterviewerAgent:
 **参考答案要点：** {qa.reference_answer[:500] if qa.reference_answer else "（无）"}
 """
 
-        # 各轮名称
+        # 各轮名称（动态生成，适配 1/2/3 轮）
         rounds_config = INTERVIEW_CONFIG[self.state.company_level]["rounds"]
-        round_names = {f"round{i+1}_name": r.get("round_name", f"第{i+1}轮") for i, r in enumerate(rounds_config)}
+        rounds_summary_parts = []
+        for i, r in enumerate(rounds_config, start=1):
+            rounds_summary_parts.append(
+                f"### 第{i}轮：{r.get('round_name', f'第{i}轮')}\n"
+                f"- 表现评级：优秀 / 良好 / 一般 / 较差\n"
+                f"- 简要评价：..."
+            )
+        rounds_summary = "\n\n".join(rounds_summary_parts)
 
         report_prompt = REPORT_PROMPT.format(
             difficulty=self.state.difficulty,
             difficulty_focus=self._get_difficulty_focus(),
             company_level=self.state.company_level.value,
             qa_records=qa_records,
+            rounds_summary=rounds_summary,
             total_rounds=self.state.total_rounds,
             total_questions=len(self.state.qa_history),
-            **round_names,
         )
 
         messages = [
@@ -336,15 +355,36 @@ class InterviewerAgent:
         questions = [f"{i+1}. {qa.question}" for i, qa in enumerate(self.state.qa_history)]
         return "\n".join(questions[-10:])  # 只显示最近10个，避免太长
 
-    def _call_llm(self, messages: List[Dict], max_tokens: Optional[int] = None) -> str:
-        """调用LLM API"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=max_tokens or self.max_tokens,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            return f"[API调用出错: {e}]"
+    def _call_llm(self, messages: List[Dict], max_tokens: Optional[int] = None, retries: int = 3) -> str:
+        """调用LLM API（带重试机制，避免偶发网络/限流导致返回空）"""
+        import time
+
+        last_error = ""
+        for attempt in range(retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=max_tokens or self.max_tokens,
+                )
+                content = response.choices[0].message.content
+                if content and content.strip():
+                    return content.strip()
+                last_error = "LLM 返回空内容"
+            except Exception as e:
+                last_error = str(e)
+
+            # 重试前短暂等待
+            if attempt < retries - 1:
+                time.sleep(1)
+
+        return f"[API调用出错: {last_error}]"
+
+    def _is_valid_response(self, text: str) -> bool:
+        """判断 LLM 返回内容是否为有效题目（非空且非错误信息）"""
+        if not text:
+            return False
+        if text.startswith("[API调用出错"):
+            return False
+        return True
